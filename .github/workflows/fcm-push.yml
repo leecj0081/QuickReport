@@ -1,0 +1,87 @@
+name: FCM Push Notification
+
+on:
+  schedule:
+    - cron: '* * * * *'
+  workflow_dispatch:
+
+jobs:
+  send-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send FCM Push
+        uses: actions/github-script@v7
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        with:
+          script: |
+            const https = require('https');
+            const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+            const projectId = serviceAccount.project_id;
+            const databaseURL = `https://${projectId}-default-rtdb.asia-southeast1.firebasedatabase.app`;
+            const { createSign } = require('crypto');
+            const now = Math.floor(Date.now() / 1000);
+            const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+            const payload = Buffer.from(JSON.stringify({
+              iss: serviceAccount.client_email,
+              sub: serviceAccount.client_email,
+              aud: 'https://oauth2.googleapis.com/token',
+              iat: now, exp: now + 3600,
+              scope: 'https://www.googleapis.com/auth/firebase.messaging https://www.googleapis.com/auth/firebase.database https://www.googleapis.com/auth/userinfo.email'
+            })).toString('base64url');
+            const sign = createSign('RSA-SHA256');
+            sign.update(`${header}.${payload}`);
+            const signature = sign.sign(serviceAccount.private_key, 'base64url');
+            const jwt = `${header}.${payload}.${signature}`;
+            const getToken = () => new Promise((resolve, reject) => {
+              const body = `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`;
+              const req = https.request({ hostname: 'oauth2.googleapis.com', path: '/token', method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, res => {
+                let data = '';
+                res.on('data', d => data += d);
+                res.on('end', () => resolve(JSON.parse(data).access_token));
+              });
+              req.on('error', reject); req.write(body); req.end();
+            });
+            const dbGet = (path, token) => new Promise((resolve, reject) => {
+              const url = new URL(`${databaseURL}/${path}.json?auth=${token}`);
+              const req = https.request(url, res => {
+                let data = '';
+                res.on('data', d => data += d);
+                res.on('end', () => resolve(JSON.parse(data)));
+              });
+              req.on('error', reject); req.end();
+            });
+            const dbDelete = (path, token) => new Promise((resolve, reject) => {
+              const url = new URL(`${databaseURL}/${path}.json?auth=${token}`);
+              const req = https.request(url.toString(), { method: 'DELETE' }, res => { res.on('data', () => {}); res.on('end', resolve); });
+              req.on('error', reject); req.end();
+            });
+            const sendFCM = (accessToken, title, body, deviceToken, data) => new Promise((resolve, reject) => {
+              const message = JSON.stringify({ message: { token: deviceToken, notification: { title, body }, data: Object.fromEntries(Object.entries(data).map(([k,v])=>[k,String(v)])), android: { priority: 'high' }, apns: { payload: { aps: { sound: 'default', badge: 1 } } } } });
+              const req = https.request({ hostname: 'fcm.googleapis.com', path: `/v1/projects/${projectId}/messages:send`, method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${accessToken}` } }, res => {
+                let d = ''; res.on('data', c => d += c); res.on('end', () => resolve(JSON.parse(d)));
+              });
+              req.on('error', reject); req.write(message); req.end();
+            });
+            try {
+              const accessToken = await getToken();
+              console.log('Token OK');
+              const channels = await dbGet('channels', accessToken);
+              if (!channels) { console.log('No channels'); return; }
+              for (const [channelId, channelData] of Object.entries(channels)) {
+                const queue = channelData.pushQueue;
+                const tokens = channelData.tokens;
+                if (!queue || !tokens) continue;
+                for (const [queueId, pushData] of Object.entries(queue)) {
+                  console.log(`Processing: ${channelId}/${queueId}`);
+                  for (const deviceToken of Object.keys(tokens)) {
+                    try {
+                      const result = await sendFCM(accessToken, pushData.title, pushData.body, deviceToken, pushData.data || {});
+                      console.log('FCM result:', JSON.stringify(result));
+                    } catch(e) { console.error('FCM error:', e.message); }
+                  }
+                  await dbDelete(`channels/${channelId}/pushQueue/${queueId}`, accessToken);
+                  console.log('Queue deleted');
+                }
+              }
+            } catch(e) { console.error('Error:', e.message); }
