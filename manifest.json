@@ -1,0 +1,24 @@
+{
+  "name": "현장 사고 퀵보고",
+  "short_name": "퀵보고",
+  "description": "건설현장 사고 즉시 보고 시스템",
+  "start_url": "/QuickReport/사고퀵보고-5.html",
+  "display": "standalone",
+  "background_color": "#f5f7fa",
+  "theme_color": "#e8441a",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "https://raw.githubusercontent.com/leecj0081/QuickReport/main/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://raw.githubusercontent.com/leecj0081/QuickReport/main/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
