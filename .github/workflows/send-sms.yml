@@ -3,9 +3,9 @@ name: 사고보고 SMS 알림
 on:
   push:
     branches: [ main ]
-  workflow_dispatch:  # 수동 실행 버튼
+  workflow_dispatch:
   schedule:
-    - cron: '* * * * *'  # 1분마다 Firebase 체크
+    - cron: '* * * * *'
 
 jobs:
   check-and-notify:
@@ -18,14 +18,14 @@ jobs:
       - name: Node.js 설정
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: 의존성 설치
         run: npm install firebase-admin axios
 
       - name: Firebase 체크 및 SMS 발송
         env:
-          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVI }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           SOLAPI_API_KEY: ${{ secrets.SOLAPI_API_KEY }}
           SOLAPI_API_SECRET: ${{ secrets.SOLAPI_API_SECRET }}
           SOLAPI_SENDER: ${{ secrets.SOLAPI_SENDER }}
