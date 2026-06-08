@@ -33,11 +33,7 @@ async function sendSMS(to, text) {
   };
 
   const body = {
-    message: {
-      to,
-      from: sender,
-      text
-    }
+    message: { to, from: sender, text }
   };
 
   try {
@@ -52,54 +48,82 @@ async function sendSMS(to, text) {
   }
 }
 
+// ── Firestore 컬렉션 목록 출력 (디버깅용) ────────────────
+async function listCollections() {
+  const collections = await db.listCollections();
+  console.log('📂 Firestore 컬렉션 목록:');
+  if (collections.length === 0) {
+    console.log('  (비어있음 - 아직 보고가 등록되지 않았습니다)');
+  }
+  for (const col of collections) {
+    console.log(`  - ${col.id}`);
+    const snap = await col.limit(3).get();
+    snap.forEach(doc => {
+      console.log(`    문서: ${doc.id}`, JSON.stringify(doc.data()).substring(0, 100));
+    });
+  }
+  return collections.map(c => c.id);
+}
+
 // ── 메인 로직 ────────────────────────────────────────────
 async function main() {
-  // 마지막 처리 시각 로드 (없으면 1분 전)
+  // 컬렉션 목록 확인
+  const collectionIds = await listCollections();
+
+  if (collectionIds.length === 0) {
+    console.log('📭 데이터 없음: 앱에서 보고를 먼저 등록해주세요.');
+    process.exit(0);
+  }
+
+  // 마지막 처리 시각 로드
   const LAST_CHECK_FILE = '/tmp/last_check.txt';
   let lastCheck;
   try {
     lastCheck = new Date(fs.readFileSync(LAST_CHECK_FILE, 'utf8').trim());
   } catch {
-    lastCheck = new Date(Date.now() - 60 * 1000);
+    lastCheck = new Date(Date.now() - 60 * 60 * 1000); // 1시간 전
   }
 
   console.log(`🔍 ${lastCheck.toISOString()} 이후 신규 보고 확인 중...`);
 
-  // Firestore에서 신규 보고 조회
-  // 컬렉션명은 실제 앱에서 사용하는 이름으로 맞춰주세요
-  const snapshot = await db.collection('reports')
-    .where('createdAt', '>', admin.firestore.Timestamp.fromDate(lastCheck))
-    .orderBy('createdAt', 'asc')
+  // 발견된 첫 번째 컬렉션에서 조회
+  const targetCollection = collectionIds[0];
+  console.log(`📌 대상 컬렉션: ${targetCollection}`);
+
+  const snapshot = await db.collection(targetCollection)
+    .orderBy('createdAt', 'desc')
+    .limit(10)
     .get();
 
   if (snapshot.empty) {
     console.log('📭 신규 보고 없음');
   } else {
-    console.log(`📬 신규 보고 ${snapshot.size}건 발견`);
+    console.log(`📬 문서 ${snapshot.size}건 발견`);
 
     for (const doc of snapshot.docs) {
       const d = doc.data();
+      console.log('문서 데이터:', JSON.stringify(d).substring(0, 200));
 
-      // SMS 메시지 구성
+      const createdAt = d.createdAt?.toDate ? d.createdAt.toDate() : new Date(d.createdAt || 0);
+      if (createdAt <= lastCheck) continue;
+
       const msg = [
         '🚨 [사고 퀵보고]',
-        `▪ 현장: ${d.site       || '-'}`,
-        `▪ 유형: ${d.type       || '-'}`,
-        `▪ 피해: ${d.severity   || '-'}`,
-        `▪ 장소: ${d.location   || '-'}`,
-        `▪ 일시: ${d.datetime   || '-'}`,
-        `▪ 보고자: ${d.reporter || '-'}`,
+        `▪ 현장: ${d.site || d.현장 || d.location || '-'}`,
+        `▪ 유형: ${d.type || d.유형 || d.accidentType || '-'}`,
+        `▪ 피해: ${d.severity || d.피해 || d.damage || '-'}`,
+        `▪ 장소: ${d.place || d.장소 || d.spot || '-'}`,
+        `▪ 일시: ${d.datetime || d.일시 || d.date || '-'}`,
+        `▪ 보고자: ${d.reporter || d.보고자 || d.name || '-'}`,
         '* 퀵보고앱 자동발송'
       ].join('\n');
 
-      // 수신번호 전체에 발송
       for (const receiver of RECEIVERS) {
         await sendSMS(receiver, msg);
       }
     }
   }
 
-  // 현재 시각 저장
   fs.writeFileSync(LAST_CHECK_FILE, new Date().toISOString());
   process.exit(0);
 }
